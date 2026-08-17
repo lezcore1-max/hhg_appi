@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback } from "react";
+import { useRef, useState, useCallback, useEffect } from "react";
 import { Mic, Square, Loader2 } from "lucide-react";
 import { askVoice, type AskResponse } from "@/lib/api";
 
@@ -12,13 +12,47 @@ interface MicOrbProps {
 export function MicOrb({ onResult, onError }: MicOrbProps) {
   const [stage, setStage] = useState<Stage>("idle");
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const autoStopTimerRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Helper to release microphone access safely
+  const releaseMic = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => {
+        try { track.stop(); } catch {}
+      });
+      streamRef.current = null;
+    }
+  }, []);
+
+  // Cleanup mic stream on unmount
+  useEffect(() => {
+    return () => {
+      if (autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
+      releaseMic();
+    };
+  }, [releaseMic]);
+
+  const stopRecording = useCallback(() => {
+    if (autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+      try {
+        mediaRecorderRef.current.stop();
+      } catch {}
+      mediaRecorderRef.current = null;
+    } else {
+      releaseMic();
+      setStage("idle");
+    }
+  }, [releaseMic]);
+
   const startRecording = useCallback(async () => {
+    releaseMic(); // ensure previous mic stream is cleanly closed
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      
+      streamRef.current = stream;
+
       let mimeType = "audio/webm";
       if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) {
         mimeType = "audio/webm;codecs=opus";
@@ -32,12 +66,12 @@ export function MicOrb({ onResult, onError }: MicOrbProps) {
       chunksRef.current = [];
 
       recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data);
+        if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
       };
 
       recorder.onstop = async () => {
         if (autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
-        stream.getTracks().forEach((t) => t.stop());
+        releaseMic();
         
         const blob = new Blob(chunksRef.current, { type: mimeType });
         setStage("processing");
@@ -53,32 +87,22 @@ export function MicOrb({ onResult, onError }: MicOrbProps) {
         }
       };
 
-      recorder.start(250); // collect slice every 250ms
+      recorder.start(200);
       mediaRecorderRef.current = recorder;
       setStage("recording");
 
-      // Auto-stop recording after 12 seconds
+      // Auto-stop recording after 12s
       autoStopTimerRef.current = setTimeout(() => {
-        if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
-          mediaRecorderRef.current.stop();
-          mediaRecorderRef.current = null;
-        }
+        stopRecording();
       }, 12000);
 
     } catch (err: unknown) {
+      releaseMic();
       setStage("idle");
-      const msg = err instanceof Error ? err.message : "Mic access denied";
+      const msg = err instanceof Error ? err.message : "Mic access denied or unavailable";
       onError?.(msg);
     }
-  }, [onResult, onError]);
-
-  const stopRecording = useCallback(() => {
-    if (autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
-      mediaRecorderRef.current.stop();
-      mediaRecorderRef.current = null;
-    }
-  }, []);
+  }, [onResult, onError, releaseMic, stopRecording]);
 
   const handleClick = () => {
     if (stage === "idle") startRecording();
