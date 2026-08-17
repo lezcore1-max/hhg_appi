@@ -57,16 +57,16 @@ function DemoPage() {
   const [textQuery, setTextQuery] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const handleResult = (r: AskResponse) => {
+  const handleResult = useCallback((r: AskResponse) => {
     setResult(r);
     setError(null);
     if (r.transcript) setTextQuery(r.transcript);
-  };
+  }, []);
 
-  const handleError = (msg: string) => {
+  const handleError = useCallback((msg: string) => {
     setError(msg);
     setResult(null);
-  };
+  }, []);
 
   const handleTextSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

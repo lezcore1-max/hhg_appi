@@ -16,6 +16,15 @@ export function MicOrb({ onResult, onError }: MicOrbProps) {
   const chunksRef = useRef<Blob[]>([]);
   const autoStopTimerRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Store callback props in refs to isolate them from component re-renders
+  const onResultRef = useRef(onResult);
+  const onErrorRef = useRef(onError);
+
+  useEffect(() => {
+    onResultRef.current = onResult;
+    onErrorRef.current = onError;
+  }, [onResult, onError]);
+
   // Helper to release microphone access safely
   const releaseMic = useCallback(() => {
     if (streamRef.current) {
@@ -35,7 +44,10 @@ export function MicOrb({ onResult, onError }: MicOrbProps) {
   }, [releaseMic]);
 
   const stopRecording = useCallback(() => {
-    if (autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
+    if (autoStopTimerRef.current) {
+      clearTimeout(autoStopTimerRef.current);
+      autoStopTimerRef.current = null;
+    }
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
       try {
         mediaRecorderRef.current.stop();
@@ -70,18 +82,21 @@ export function MicOrb({ onResult, onError }: MicOrbProps) {
       };
 
       recorder.onstop = async () => {
-        if (autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
+        if (autoStopTimerRef.current) {
+          clearTimeout(autoStopTimerRef.current);
+          autoStopTimerRef.current = null;
+        }
         releaseMic();
-        
+
         const blob = new Blob(chunksRef.current, { type: mimeType });
         setStage("processing");
 
         try {
           const result = await askVoice(blob);
-          onResult?.(result);
+          onResultRef.current?.(result);
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : "Voice processing error";
-          onError?.(msg);
+          onErrorRef.current?.(msg);
         } finally {
           setStage("idle");
         }
@@ -100,9 +115,9 @@ export function MicOrb({ onResult, onError }: MicOrbProps) {
       releaseMic();
       setStage("idle");
       const msg = err instanceof Error ? err.message : "Mic access denied or unavailable";
-      onError?.(msg);
+      onErrorRef.current?.(msg);
     }
-  }, [onResult, onError, releaseMic, stopRecording]);
+  }, [releaseMic, stopRecording]);
 
   const handleClick = () => {
     if (stage === "idle") startRecording();
@@ -123,7 +138,7 @@ export function MicOrb({ onResult, onError }: MicOrbProps) {
       disabled={stage === "processing"}
       aria-label={ariaLabel}
       aria-pressed={stage === "recording"}
-      className="group relative grid h-40 w-40 place-items-center rounded-full focus:outline-none"
+      className="group relative grid h-40 w-40 place-items-center rounded-full focus:outline-none cursor-pointer"
     >
       {stage === "recording" && (
         <>
