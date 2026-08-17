@@ -1,6 +1,5 @@
 // Set VITE_BACKEND_URL in .env.local for dev, or in Vercel env vars for production
-// e.g. VITE_BACKEND_URL=https://YOUR-USERNAME-tilt-rag.hf.space
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL ?? "http://localhost:8000";
+const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL ?? "http://localhost:8000").replace(/\/$/, "");
 
 export interface AskResponse {
   answer: string;
@@ -16,9 +15,26 @@ export interface AskResponse {
   llm_latency_ms?: number;
 }
 
+/** Helper with AbortController timeout */
+async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 20000): Promise<Response> {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    clearTimeout(id);
+    return response;
+  } catch (err: unknown) {
+    clearTimeout(id);
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error("Request timed out. Please try again.");
+    }
+    throw err;
+  }
+}
+
 /** Text query → RAG answer */
 export async function askText(query: string): Promise<AskResponse> {
-  const res = await fetch(`${BACKEND_URL}/ask`, {
+  const res = await fetchWithTimeout(`${BACKEND_URL}/ask`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ query }),
@@ -30,14 +46,17 @@ export async function askText(query: string): Promise<AskResponse> {
   return res.json();
 }
 
-/** Audio Blob (WAV from MediaRecorder) → Sarvam STT → RAG answer */
+/** Audio Blob → Sarvam STT → RAG answer */
 export async function askVoice(audioBlob: Blob): Promise<AskResponse> {
   const form = new FormData();
-  form.append("file", audioBlob, "recording.wav");
-  const res = await fetch(`${BACKEND_URL}/voice-ask`, {
+  const ext = audioBlob.type.includes("mp4") ? "m4a" : audioBlob.type.includes("ogg") ? "ogg" : "webm";
+  form.append("file", audioBlob, `recording.${ext}`);
+
+  const res = await fetchWithTimeout(`${BACKEND_URL}/voice-ask`, {
     method: "POST",
     body: form,
-  });
+  }, 25000);
+
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail ?? "Voice backend error");

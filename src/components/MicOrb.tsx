@@ -13,11 +13,22 @@ export function MicOrb({ onResult, onError }: MicOrbProps) {
   const [stage, setStage] = useState<Stage>("idle");
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const autoStopTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const startRecording = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
+      
+      let mimeType = "audio/webm";
+      if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) {
+        mimeType = "audio/webm;codecs=opus";
+      } else if (MediaRecorder.isTypeSupported("audio/mp4")) {
+        mimeType = "audio/mp4";
+      } else if (MediaRecorder.isTypeSupported("audio/ogg")) {
+        mimeType = "audio/ogg";
+      }
+
+      const recorder = new MediaRecorder(stream, { mimeType });
       chunksRef.current = [];
 
       recorder.ondataavailable = (e) => {
@@ -25,32 +36,48 @@ export function MicOrb({ onResult, onError }: MicOrbProps) {
       };
 
       recorder.onstop = async () => {
+        if (autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
         stream.getTracks().forEach((t) => t.stop());
-        const blob = new Blob(chunksRef.current, { type: "audio/wav" });
+        
+        const blob = new Blob(chunksRef.current, { type: mimeType });
         setStage("processing");
+
         try {
           const result = await askVoice(blob);
           onResult?.(result);
         } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : "Unknown error";
+          const msg = err instanceof Error ? err.message : "Voice processing error";
           onError?.(msg);
         } finally {
           setStage("idle");
         }
       };
 
-      recorder.start();
+      recorder.start(250); // collect slice every 250ms
       mediaRecorderRef.current = recorder;
       setStage("recording");
+
+      // Auto-stop recording after 12 seconds
+      autoStopTimerRef.current = setTimeout(() => {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+          mediaRecorderRef.current.stop();
+          mediaRecorderRef.current = null;
+        }
+      }, 12000);
+
     } catch (err: unknown) {
+      setStage("idle");
       const msg = err instanceof Error ? err.message : "Mic access denied";
       onError?.(msg);
     }
   }, [onResult, onError]);
 
   const stopRecording = useCallback(() => {
-    mediaRecorderRef.current?.stop();
-    mediaRecorderRef.current = null;
+    if (autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current = null;
+    }
   }, []);
 
   const handleClick = () => {
