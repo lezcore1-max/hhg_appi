@@ -163,7 +163,7 @@ function DemoPage() {
               <StageRow label="Speech-to-text (Sarvam)" ms={result.stt_latency_ms} />
               <StageRow label="Hybrid retrieval" ms={result.retrieval_latency_ms} />
               <StageRow label="Cross-encoder rerank" ms={result.rerank_latency_ms} />
-              <StageRow label="Grounded generation" ms={result.llm_latency_ms} />
+              <StageRow label="Grounded generation (TTFT / 1st Token)" ms={result.llm_latency_ms} />
               <div className="pt-1 border-t border-border flex justify-between text-sm font-bold">
                 <span className="label-mono text-muted-foreground">Total</span>
                 <span className="text-primary">{totalMs != null ? `${totalMs} ms` : "—"}</span>
