@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { MicOrb } from "@/components/MicOrb";
 import { PageShell } from "@/components/PageShell";
 import { askText, type AskResponse } from "@/lib/api";
