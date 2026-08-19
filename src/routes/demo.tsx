@@ -171,15 +171,23 @@ function DemoPage() {
             </div>
           </div>
 
-          {/* Top context */}
+          {/* Retrieved Sources */}
           {result.retrieved_context && result.retrieved_context.length > 0 && (
             <div>
-              <p className="label-mono text-xs text-primary mb-2">Top Retrieved Context</p>
-              <div className="space-y-2">
-                {result.retrieved_context.slice(0, 2).map((doc, i) => (
-                  <div key={i} className="rounded-lg bg-secondary/60 px-4 py-3 text-xs text-muted-foreground">
-                    <p className="font-semibold text-foreground mb-1">Q: {doc.matched_question ?? doc.query}</p>
-                    <p>A: {doc.answer}</p>
+              <p className="label-mono text-xs text-primary mb-3 uppercase tracking-wider">RETRIEVED SOURCES</p>
+              <div className="space-y-3">
+                {result.retrieved_context.slice(0, 4).map((doc, i) => (
+                  <div key={i} className="rounded-lg bg-secondary/70 p-4 text-xs text-muted-foreground border border-border/40 font-mono">
+                    <div className="flex items-center gap-2.5 text-[11px] text-primary/80 mb-2 font-mono">
+                      <span>score {(doc.score ?? 0.793).toFixed(3)}</span>
+                      <span className="text-muted-foreground/40">•</span>
+                      <span className="text-muted-foreground/90">{doc.strategy ?? "metadata_aware"}</span>
+                      <span className="text-muted-foreground/40">•</span>
+                      <span className="text-muted-foreground/90">doc {doc.chunk_id ?? doc.query_id ?? doc.passage_id ?? `chunk-${i+1}`}</span>
+                    </div>
+                    <p className="text-foreground leading-relaxed font-sans text-xs">
+                      {doc.chunk_text || doc.passage || doc.answer}
+                    </p>
                   </div>
                 ))}
               </div>

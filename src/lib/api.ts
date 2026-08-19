@@ -5,7 +5,7 @@ export interface AskResponse {
   answer: string;
   status: string;
   transcript?: string;
-  retrieved_context?: { matched_question?: string; query?: string; answer: string }[];
+  retrieved_context?: { matched_question?: string; query?: string; answer: string; chunk_text?: string; passage?: string; chunk_id?: string; passage_id?: string; query_id?: string; strategy?: string; score?: number }[];
   total_latency_ms?: number;
   total_pipeline_latency_ms?: number;
   latency_ms?: number;
