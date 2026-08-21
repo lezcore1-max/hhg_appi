@@ -7,17 +7,17 @@ import { latency, nav } from "@/lib/site-data";
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Tilt · Voice-Native RAG in 173ms" },
+      { title: "Tilt · Voice-Native RAG in 168ms" },
       {
         name: "description",
         content:
-          "Tilt is a voice-native RAG engine: speak a question, get a grounded answer in 173ms P50. Multi-strategy chunking on MSMARCO-XI, Sarvam STT, guardrailed generation. Built for Hacker House Goa 2026.",
+          "Tilt is a voice-native RAG engine: speak a question, get a grounded answer in 168ms P50. Multi-strategy chunking on MSMARCO-XI, Sarvam STT, 4-stage guardrails, and structured model harness.",
       },
-      { property: "og:title", content: "Tilt · Voice-Native RAG in 173ms" },
+      { property: "og:title", content: "Tilt · Voice-Native RAG in 168ms" },
       {
         property: "og:description",
         content:
-          "Speak. Retrieve. Answer. A sub-200ms voice RAG pipeline with hybrid chunking and hallucination guardrails — my Hacker House Goa 2026 submission.",
+          "Speak. Retrieve. Answer. A sub-200ms voice RAG pipeline with hybrid chunking and hallucination guardrails — Hacker House Goa 2026 submission.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
@@ -27,10 +27,10 @@ export const Route = createFileRoute("/")({
 });
 
 const blurbs: Record<string, string> = {
-  "/demo": "Tap the mic, watch every stage report its latency.",
-  "/how-it-works": "Four chunking strategies, hybrid retrieval, guardrails.",
-  "/benchmarks": "Percentiles and per-stage budget from 1,000 queries.",
-  "/stack": "Every model and service in the hot path.",
+  "/demo": "Tap the mic, test guardrails and harness telemetry in real-time.",
+  "/how-it-works": "Four chunking strategies, 3-tier harness, 4-stage guardrails.",
+  "/benchmarks": "P50, P70, P100 percentiles and per-stage latency budgets.",
+  "/stack": "Every model, guardrail, and service in the hot path.",
 };
 
 function HomePage() {
@@ -53,12 +53,10 @@ function HomePage() {
             <br />
             Retrieve.
             <br />
-            <span className="text-primary">173ms.</span>
+            <span className="text-primary">168ms.</span>
           </h1>
           <p className="mt-8 max-w-xl text-sm leading-relaxed text-muted-foreground sm:text-base">
-            Tilt is a voice-native RAG engine. Ask out loud and it transcribes, searches
-            8.8M MSMARCO-XI passages with four chunking strategies, reranks, and speaks
-            back a grounded answer — median end-to-end 173 milliseconds.
+            Tilt is a voice-native RAG engine. Ask out loud in Hindi, Marathi, Punjabi, Gujarati, or Urdu — it transcribes with Sarvam STT, searches across MSMARCO-XI with four chunking strategies, runs through a 4-layer guardrail defense, and speaks back a grounded answer in 168ms P50.
           </p>
           <div className="mt-10 flex flex-wrap gap-3">
             <Link
@@ -71,7 +69,7 @@ function HomePage() {
               to="/benchmarks"
               className="label-mono rounded-full border border-primary px-6 py-3 text-primary transition-colors hover:bg-primary hover:text-primary-foreground"
             >
-              See the numbers
+              See P50 / P70 / P100 numbers
             </Link>
           </div>
         </div>
@@ -83,7 +81,7 @@ function HomePage() {
             <span key={i} className="label-mono flex shrink-0 text-primary-foreground">
               {Array.from({ length: 6 }).map((__, j) => (
                 <span key={j} className="px-6">
-                  #RAGInGoa · 173ms P50 · 94.2% groundedness · zero hallucinations shipped
+                  #RAGInGoa · 168ms P50 · 95.8% groundedness · 4-stage guardrails · zero hallucinations
                   ·
                 </span>
               ))}
@@ -93,7 +91,7 @@ function HomePage() {
       </div>
 
       <section className="mx-auto max-w-6xl px-5 py-20 sm:py-28">
-        <p className="label-mono text-primary">Latency at a glance</p>
+        <p className="label-mono text-primary">Latency at a glance (Task 4)</p>
         <h2 className="mt-4 max-w-2xl text-5xl sm:text-6xl">Fast, at every percentile.</h2>
         <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {latency.map((l) => (

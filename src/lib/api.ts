@@ -1,11 +1,61 @@
 // Set VITE_BACKEND_URL in .env.local for dev, or in Vercel env vars for production
 const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL ?? "http://localhost:8000").replace(/\/$/, "");
 
+export interface GuardrailReport {
+  passed: boolean;
+  reason: string;
+  checks: {
+    safety: "PASS" | "FAIL";
+    prompt_injection: "PASS" | "FAIL";
+    domain_relevance: "PASS" | "FAIL";
+    grounding_verification: string;
+    hallucination_check: "PASS" | "FAIL";
+  };
+}
+
+export interface HarnessTelemetry {
+  model_tier?: string;
+  model_name?: string;
+  retries_count?: number;
+  tool_calls?: Array<{
+    tool: string;
+    inputs: Record<string, any>;
+    output_count?: number;
+    top_doc_id?: string;
+  }>;
+  stage_durations_ms?: Record<string, number>;
+  fallback_used?: boolean;
+  status?: string;
+}
+
 export interface AskResponse {
+  query?: string;
   answer: string;
   status: string;
+  language?: string;
+  language_name?: string;
   transcript?: string;
-  retrieved_context?: { matched_question?: string; query?: string; answer: string; chunk_text?: string; passage?: string; chunk_id?: string; passage_id?: string; query_id?: string; strategy?: string; score?: number }[];
+  confidence?: number;
+  match_quality?: string;
+  raw_score?: number;
+  semantic_sim?: number;
+  claims?: Array<{ statement: string; passage_citation_id: string }>;
+  cited_chunk_ids?: string[];
+  retrieved_context?: {
+    matched_question?: string;
+    query?: string;
+    answer: string;
+    chunk_text?: string;
+    passage?: string;
+    chunk_id?: string;
+    passage_id?: string;
+    query_id?: string;
+    strategy?: string;
+    score?: number;
+    language?: string;
+  }[];
+  guardrails?: GuardrailReport;
+  harness_telemetry?: HarnessTelemetry;
   total_latency_ms?: number;
   total_pipeline_latency_ms?: number;
   latency_ms?: number;
@@ -13,6 +63,36 @@ export interface AskResponse {
   retrieval_latency_ms?: number;
   rerank_latency_ms?: number;
   llm_latency_ms?: number;
+}
+
+export interface BenchmarkReport {
+  timestamp: string;
+  total_queries_tested: number;
+  latency_percentiles: {
+    p50_ms: number;
+    p70_ms: number;
+    p90_ms: number;
+    p95_ms: number;
+    p100_ms: number;
+    mean_ms: number;
+    min_ms: number;
+  };
+  stage_percentiles: {
+    stt: Record<string, number>;
+    retrieval: Record<string, number>;
+    harness_and_guardrails?: Record<string, number>;
+    llm_generation_ttft: Record<string, number>;
+  };
+  time_budget: Array<{
+    part: string;
+    ms: number;
+    pct: number;
+  }>;
+  quality_metrics: {
+    groundedness_rate: string;
+    recall_at_5: string;
+    guardrail_accuracy: string;
+  };
 }
 
 /** Helper with AbortController timeout */
@@ -33,11 +113,11 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 2
 }
 
 /** Text query → RAG answer */
-export async function askText(query: string): Promise<AskResponse> {
+export async function askText(query: string, lang?: string): Promise<AskResponse> {
   const res = await fetchWithTimeout(`${BACKEND_URL}/ask`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query }),
+    body: JSON.stringify({ query, lang }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
@@ -46,10 +126,31 @@ export async function askText(query: string): Promise<AskResponse> {
   return res.json();
 }
 
+/** Fetch live latency benchmark metrics */
+export async function fetchBenchmarks(): Promise<BenchmarkReport> {
+  const res = await fetchWithTimeout(`${BACKEND_URL}/benchmarks`, {
+    method: "GET",
+  });
+  if (!res.ok) {
+    throw new Error("Failed to fetch benchmarks.");
+  }
+  return res.json();
+}
+
+/** Trigger on-demand benchmark evaluation run */
+export async function triggerBenchmarkRun(): Promise<BenchmarkReport> {
+  const res = await fetchWithTimeout(`${BACKEND_URL}/benchmarks/run`, {
+    method: "POST",
+  }, 45000);
+  if (!res.ok) {
+    throw new Error("Failed to execute benchmark evaluation.");
+  }
+  return res.json();
+}
+
 // ---------------------------------------------------------------------------
 // Realtime Streaming STT via Sarvam WebSocket API
 // Routed through backend /ws/sarvam proxy (API key stays server-side)
-// https://docs.sarvam.ai/api/api-guides-tutorials/speech-to-text/realtime-streaming
 // ---------------------------------------------------------------------------
 
 /** Build a WebSocket URL from the backend HTTP(S) URL. */
@@ -60,9 +161,6 @@ function backendWsUrl(path: string): string {
 
 /**
  * Convert browser AudioContext samples to base64-encoded 16 kHz linear16 PCM.
- *
- * @param input       Float32Array from ScriptProcessorNode (browser sample rate)
- * @param sourceRate  AudioContext.sampleRate (typically 44100 or 48000)
  */
 export function toLinear16Base64(input: Float32Array, sourceRate: number): string {
   const targetRate = 16000;
@@ -76,7 +174,6 @@ export function toLinear16Base64(input: Float32Array, sourceRate: number): strin
     pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
   }
 
-  // Int16Array → raw bytes → base64
   const bytes = new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength);
   let binary = "";
   for (let i = 0; i < bytes.length; i++) {
@@ -88,16 +185,6 @@ export function toLinear16Base64(input: Float32Array, sourceRate: number): strin
 /**
  * Opens a WebSocket to Sarvam's Realtime Streaming STT and streams raw
  * linear16 PCM audio captured from the provided ScriptProcessorNode.
- *
- * The processor's `onaudioprocess` is set up internally to capture
- * float samples, resample to 16 kHz, encode as linear16, and stream
- * them to the WebSocket as `audio_input` events.
- *
- * Returns a promise that resolves with the final transcript text.
- *
- * @param processor  ScriptProcessorNode connected to the mic AudioContext
- * @param sourceRate AudioContext.sampleRate (for resampling to 16 kHz)
- * @param cleanup    Called when the utterance ends (stop processor, close ctx, release mic)
  */
 export function streamStt(
   processor: ScriptProcessorNode,
@@ -140,7 +227,6 @@ export function streamStt(
         const data = JSON.parse(msg.data as string);
         const text = data.text ?? data.transcript ?? "";
 
-        // Handle live partial transcription
         if (data.event === "transcript.partial" || data.event === "transcript") {
           if (text && onPartial) {
             onPartial(text);
