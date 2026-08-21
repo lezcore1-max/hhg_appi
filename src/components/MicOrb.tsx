@@ -1,41 +1,53 @@
 import { useRef, useState, useCallback, useEffect } from "react";
 import { Mic, Square, Loader2 } from "lucide-react";
-import { askVoice, type AskResponse } from "@/lib/api";
+import { askText, streamStt, type AskResponse } from "@/lib/api";
 
 type Stage = "idle" | "recording" | "processing";
 
 interface MicOrbProps {
   onResult?: (result: AskResponse) => void;
   onError?: (msg: string) => void;
+  onPartialTranscript?: (text: string) => void;
 }
 
-export function MicOrb({ onResult, onError }: MicOrbProps) {
+export function MicOrb({ onResult, onError, onPartialTranscript }: MicOrbProps) {
   const [stage, setStage] = useState<Stage>("idle");
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const procRef = useRef<ScriptProcessorNode | null>(null);
+  const srcRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const sttRef = useRef<{ promise: Promise<string>; stop: () => void } | null>(null);
   const autoStopTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Store callback props in refs to isolate them from component re-renders
   const onResultRef = useRef(onResult);
   const onErrorRef = useRef(onError);
+  const onPartialTranscriptRef = useRef(onPartialTranscript);
 
   useEffect(() => {
     onResultRef.current = onResult;
     onErrorRef.current = onError;
-  }, [onResult, onError]);
+    onPartialTranscriptRef.current = onPartialTranscript;
+  }, [onResult, onError, onPartialTranscript]);
 
-  // Helper to release microphone access safely
   const releaseMic = useCallback(() => {
+    if (procRef.current) {
+      try { procRef.current.disconnect(); } catch {}
+      procRef.current = null;
+    }
+    if (srcRef.current) {
+      try { srcRef.current.disconnect(); } catch {}
+      srcRef.current = null;
+    }
+    if (audioCtxRef.current) {
+      try { audioCtxRef.current.close(); } catch {}
+      audioCtxRef.current = null;
+    }
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => {
-        try { track.stop(); } catch {}
-      });
+      streamRef.current.getTracks().forEach((t) => { try { t.stop(); } catch {} });
       streamRef.current = null;
     }
   }, []);
 
-  // Cleanup mic stream on unmount
   useEffect(() => {
     return () => {
       if (autoStopTimerRef.current) clearTimeout(autoStopTimerRef.current);
@@ -48,74 +60,73 @@ export function MicOrb({ onResult, onError }: MicOrbProps) {
       clearTimeout(autoStopTimerRef.current);
       autoStopTimerRef.current = null;
     }
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
-      try {
-        mediaRecorderRef.current.stop();
-      } catch {}
-      mediaRecorderRef.current = null;
-    } else {
-      releaseMic();
-      setStage("idle");
+
+    if (sttRef.current) {
+      sttRef.current.stop();
+      sttRef.current = null;
+      setStage("processing");
+      return;
     }
+
+    releaseMic();
+    setStage("idle");
   }, [releaseMic]);
 
   const startRecording = useCallback(async () => {
-    releaseMic(); // ensure previous mic stream is cleanly closed
+    releaseMic();
+    setStage("recording");
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
 
-      let mimeType = "audio/webm";
-      if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) {
-        mimeType = "audio/webm;codecs=opus";
-      } else if (MediaRecorder.isTypeSupported("audio/mp4")) {
-        mimeType = "audio/mp4";
-      } else if (MediaRecorder.isTypeSupported("audio/ogg")) {
-        mimeType = "audio/ogg";
-      }
+      const audioCtx = new AudioContext();
+      audioCtxRef.current = audioCtx;
+      const src = audioCtx.createMediaStreamSource(stream);
+      srcRef.current = src;
+      const proc = audioCtx.createScriptProcessor(4096, 1, 1);
+      procRef.current = proc;
+      src.connect(proc);
+      proc.connect(audioCtx.destination);
 
-      const recorder = new MediaRecorder(stream, { mimeType });
-      chunksRef.current = [];
-
-      recorder.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
-      };
-
-      recorder.onstop = async () => {
-        if (autoStopTimerRef.current) {
-          clearTimeout(autoStopTimerRef.current);
-          autoStopTimerRef.current = null;
+      // Pass real-time transcript updates up
+      const { promise: transcriptPromise, stop } = streamStt(
+        proc,
+        audioCtx.sampleRate,
+        releaseMic,
+        (partialText) => {
+          onPartialTranscriptRef.current?.(partialText);
         }
-        releaseMic();
+      );
+      sttRef.current = { promise: transcriptPromise, stop };
 
-        const blob = new Blob(chunksRef.current, { type: mimeType });
-        setStage("processing");
-
-        try {
-          const result = await askVoice(blob);
-          onResultRef.current?.(result);
-        } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : "Voice processing error";
-          onErrorRef.current?.(msg);
-        } finally {
-          setStage("idle");
-        }
-      };
-
-      recorder.start(200);
-      mediaRecorderRef.current = recorder;
-      setStage("recording");
-
-      // Auto-stop recording after 12s
       autoStopTimerRef.current = setTimeout(() => {
         stopRecording();
       }, 12000);
 
+      const transcript = await transcriptPromise;
+
+      if (autoStopTimerRef.current) {
+        clearTimeout(autoStopTimerRef.current);
+        autoStopTimerRef.current = null;
+      }
+
+      if (!transcript.trim()) {
+        setStage("idle");
+        return;
+      }
+
+      setStage("processing");
+      const result = await askText(transcript.trim());
+      result.transcript = transcript.trim();
+      onResultRef.current?.(result);
     } catch (err: unknown) {
-      releaseMic();
-      setStage("idle");
-      const msg = err instanceof Error ? err.message : "Mic access denied or unavailable";
+      const msg = err instanceof Error ? err.message : "Voice processing error";
       onErrorRef.current?.(msg);
+    } finally {
+      releaseMic();
+      sttRef.current = null;
+      setStage("idle");
     }
   }, [releaseMic, stopRecording]);
 

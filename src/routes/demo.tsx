@@ -26,8 +26,8 @@ export const Route = createFileRoute("/demo")({
   component: DemoPage,
 });
 
-function latencyBar(ms: number | undefined, max = 200) {
-  if (!ms) return null;
+function latencyBar(ms: number | undefined, max = 1000) {
+  if (ms == null || !max) return null;
   const pct = Math.min((ms / max) * 100, 100).toFixed(1);
   return (
     <div className="h-1.5 w-full overflow-hidden rounded-full bg-border">
@@ -39,14 +39,14 @@ function latencyBar(ms: number | undefined, max = 200) {
   );
 }
 
-function StageRow({ label, ms }: { label: string; ms?: number }) {
+function StageRow({ label, ms, max }: { label: string; ms?: number; max?: number }) {
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between text-xs text-muted-foreground label-mono">
         <span>{label}</span>
         <span className="text-primary font-bold">{ms != null ? `${ms} ms` : "—"}</span>
       </div>
-      {latencyBar(ms)}
+      {latencyBar(ms, max)}
     </div>
   );
 }
@@ -95,47 +95,50 @@ function DemoPage() {
       intro="Speak your question — Sarvam AI transcribes it, RAG retrieves, reranks, and Gemini answers. All latencies are real."
     >
       {/* Mic Orb */}
-      <div className="flex flex-col items-center gap-4">
-        <MicOrb onResult={handleResult} onError={handleError} />
+      <div className="grain mt-14 flex flex-col items-center rounded-lg border border-border bg-card p-8 center sm:p-12">
+        <MicOrb
+          onResult={handleResult}
+          onError={handleError}
+          onPartialTranscript={(liveText) => setTextQuery(liveText)}
+        />
         <p className="label-mono text-xs text-muted-foreground">
           {result ? "Done! Tap again to ask another." : "Tap the orb to start speaking"}
         </p>
-      </div>
-
-      {/* OR type query */}
-      <form
-        onSubmit={handleTextSubmit}
-        className="mt-8 flex w-full max-w-xl gap-2"
-        id="text-query-form"
-      >
-        <input
-          type="text"
-          value={textQuery}
-          onChange={(e) => setTextQuery(e.target.value)}
-          placeholder="या यहाँ टाइप करें... (or type in Hindi)"
-          className="flex-1 rounded-lg border border-border bg-card px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-          id="demo-text-input"
-        />
-        <button
-          type="submit"
-          disabled={loading || !textQuery.trim()}
-          className="label-mono rounded-lg bg-primary px-5 py-2.5 text-primary-foreground transition-transform hover:scale-105 disabled:opacity-50"
-          id="demo-submit-btn"
+        {/* OR type query */}
+        <form
+          onSubmit={handleTextSubmit}
+          className="mt-8 flex w-full max-w-xl gap-2"
+          id="text-query-form"
         >
-          {loading ? "..." : "पूछें"}
-        </button>
-      </form>
+          <input
+            type="text"
+            value={textQuery}
+            onChange={(e) => setTextQuery(e.target.value)}
+            placeholder="या यहाँ टाइप करें... (or type in Hindi)"
+            className="flex-1 rounded-lg border border-border bg-card px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+            id="demo-text-input"
+          />
+          <button
+            type="submit"
+            disabled={loading || !textQuery.trim()}
+            className="label-mono rounded-lg bg-primary px-5 py-2.5 text-primary-foreground transition-transform hover:scale-105 disabled:opacity-50"
+            id="demo-submit-btn"
+          >
+            {loading ? "..." : "पूछें"}
+          </button>
+        </form>
 
-      {/* Error */}
-      {error && (
-        <div className="mt-6 w-full max-w-xl rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-          ⚠ {error}
-        </div>
-      )}
+        {/* Error */}
+        {error && (
+          <div className="mt-6 w-full max-w-xl rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+            ⚠ {error}
+          </div>
+        )}
+      </div>
 
       {/* Result card */}
       {result && (
-        <div className="mt-8 w-full max-w-xl space-y-5 rounded-xl border border-border bg-card p-6 grain">
+        <div className="grain mt-8 w-full space-y-6 rounded-lg border border-border bg-card p-8 sm:p-12">
 
           {/* Transcript */}
           {result.transcript && (
@@ -160,10 +163,10 @@ function DemoPage() {
           <div>
             <p className="label-mono text-xs text-primary mb-3">Pipeline Latency</p>
             <div className="space-y-3">
-              <StageRow label="Speech-to-text (Sarvam)" ms={result.stt_latency_ms} />
-              <StageRow label="Hybrid retrieval" ms={result.retrieval_latency_ms} />
-              <StageRow label="Cross-encoder rerank" ms={result.rerank_latency_ms} />
-              <StageRow label="Grounded generation (TTFT / 1st Token)" ms={result.llm_latency_ms} />
+              <StageRow label="Speech-to-text (Sarvam)" ms={result.stt_latency_ms} max={totalMs} />
+              <StageRow label="Hybrid retrieval" ms={result.retrieval_latency_ms} max={totalMs} />
+              <StageRow label="Cross-encoder rerank" ms={result.rerank_latency_ms} max={totalMs} />
+              <StageRow label="Grounded generation (TTFT / 1st Token)" ms={result.llm_latency_ms} max={totalMs} />
               <div className="pt-1 border-t border-border flex justify-between text-sm font-bold">
                 <span className="label-mono text-muted-foreground">Total</span>
                 <span className="text-primary">{totalMs != null ? `${totalMs} ms` : "—"}</span>
@@ -183,7 +186,7 @@ function DemoPage() {
                       <span className="text-muted-foreground/40">•</span>
                       <span className="text-muted-foreground/90">{doc.strategy ?? "metadata_aware"}</span>
                       <span className="text-muted-foreground/40">•</span>
-                      <span className="text-muted-foreground/90">doc {doc.chunk_id ?? doc.query_id ?? doc.passage_id ?? `chunk-${i+1}`}</span>
+                      <span className="text-muted-foreground/90">doc {doc.chunk_id ?? doc.query_id ?? doc.passage_id ?? `chunk-${i + 1}`}</span>
                     </div>
                     <p className="text-foreground leading-relaxed font-sans text-xs">
                       {doc.chunk_text || doc.passage || doc.answer}
