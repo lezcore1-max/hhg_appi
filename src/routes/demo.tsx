@@ -3,7 +3,7 @@ import { useState, useCallback } from "react";
 import { MicOrb } from "@/components/MicOrb";
 import { PageShell } from "@/components/PageShell";
 import { askText, type AskResponse } from "@/lib/api";
-import { ShieldCheck, ShieldAlert, Cpu, Sparkles, CheckCircle2, XCircle, ArrowRight } from "lucide-react";
+import { ShieldCheck, ShieldAlert, Cpu, CheckCircle2 } from "lucide-react";
 
 export const Route = createFileRoute("/demo")({
   head: () => ({

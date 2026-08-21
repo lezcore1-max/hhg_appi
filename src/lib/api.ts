@@ -1,5 +1,44 @@
 // Set VITE_BACKEND_URL in .env.local for dev, or in Vercel env vars for production
-const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL ?? "http://localhost:8000").replace(/\/$/, "");
+const RAW_BACKEND_URL = (import.meta.env.VITE_BACKEND_URL ?? "http://localhost:8000").replace(/\/$/, "");
+
+/**
+ * Returns a normalized HTTP(S) URL for backend REST endpoints.
+ * Automatically upgrades http -> https when running on an HTTPS origin (unless on localhost).
+ */
+function getHttpUrl(path: string): string {
+  if (!RAW_BACKEND_URL || !RAW_BACKEND_URL.startsWith("http")) {
+    return path;
+  }
+
+  const url = new URL(RAW_BACKEND_URL);
+  const isLocalhost = url.hostname === "localhost" || url.hostname === "127.0.0.1";
+  const isHttps = (typeof window !== "undefined" && window.location.protocol === "https:") || url.protocol === "https:";
+
+  if (isHttps && !isLocalhost) {
+    url.protocol = "https:";
+  }
+
+  return `${url.origin}${path}`;
+}
+
+/**
+ * Returns a normalized WS(S) URL for backend WebSocket endpoints.
+ * Automatically upgrades ws -> wss when running on an HTTPS origin (unless on localhost).
+ */
+function getWsUrl(path: string): string {
+  if (!RAW_BACKEND_URL || !RAW_BACKEND_URL.startsWith("http")) {
+    const proto = typeof window !== "undefined" && window.location.protocol === "https:" ? "wss" : "ws";
+    const host = typeof window !== "undefined" ? window.location.host : "localhost:8000";
+    return `${proto}://${host}${path}`;
+  }
+
+  const url = new URL(RAW_BACKEND_URL);
+  const isLocalhost = url.hostname === "localhost" || url.hostname === "127.0.0.1";
+  const isHttps = (typeof window !== "undefined" && window.location.protocol === "https:") || url.protocol === "https:";
+  const proto = isHttps && !isLocalhost ? "wss" : "ws";
+
+  return `${proto}://${url.host}${path}`;
+}
 
 export interface GuardrailReport {
   passed: boolean;
@@ -114,7 +153,7 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 2
 
 /** Text query → RAG answer */
 export async function askText(query: string, lang?: string): Promise<AskResponse> {
-  const res = await fetchWithTimeout(`${BACKEND_URL}/ask`, {
+  const res = await fetchWithTimeout(getHttpUrl("/ask"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ query, lang }),
@@ -128,7 +167,7 @@ export async function askText(query: string, lang?: string): Promise<AskResponse
 
 /** Fetch live latency benchmark metrics */
 export async function fetchBenchmarks(): Promise<BenchmarkReport> {
-  const res = await fetchWithTimeout(`${BACKEND_URL}/benchmarks`, {
+  const res = await fetchWithTimeout(getHttpUrl("/benchmarks"), {
     method: "GET",
   });
   if (!res.ok) {
@@ -139,9 +178,11 @@ export async function fetchBenchmarks(): Promise<BenchmarkReport> {
 
 /** Trigger on-demand benchmark evaluation run */
 export async function triggerBenchmarkRun(): Promise<BenchmarkReport> {
-  const res = await fetchWithTimeout(`${BACKEND_URL}/benchmarks/run`, {
-    method: "POST",
-  }, 45000);
+  const res = await fetchWithTimeout(
+    getHttpUrl("/benchmarks/run"),
+    { method: "POST" },
+    45000
+  );
   if (!res.ok) {
     throw new Error("Failed to execute benchmark evaluation.");
   }
@@ -153,24 +194,35 @@ export async function triggerBenchmarkRun(): Promise<BenchmarkReport> {
 // Routed through backend /ws/sarvam proxy (API key stays server-side)
 // ---------------------------------------------------------------------------
 
-/** Build a WebSocket URL from the backend HTTP(S) URL. */
-function backendWsUrl(path: string): string {
-  const proto = BACKEND_URL.startsWith("https") ? "wss" : "ws";
-  return `${proto}://${new URL(BACKEND_URL).host}${path}`;
-}
-
 /**
  * Convert browser AudioContext samples to base64-encoded 16 kHz linear16 PCM.
+ * Uses linear interpolation to prevent anti-aliasing distortion.
  */
 export function toLinear16Base64(input: Float32Array, sourceRate: number): string {
   const targetRate = 16000;
+  if (sourceRate === targetRate) {
+    const pcm = new Int16Array(input.length);
+    for (let i = 0; i < input.length; i++) {
+      const s = Math.max(-1, Math.min(1, input[i]));
+      pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+    }
+    const bytes = new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength);
+    let binary = "";
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    return btoa(binary);
+  }
+
   const ratio = sourceRate / targetRate;
   const outLen = Math.floor(input.length / ratio);
   const pcm = new Int16Array(outLen);
 
   for (let i = 0; i < outLen; i++) {
-    const idx = Math.floor(i * ratio);
-    const s = Math.max(-1, Math.min(1, input[idx]));
+    const pos = i * ratio;
+    const idx = Math.floor(pos);
+    const frac = pos - idx;
+    const nextIdx = Math.min(idx + 1, input.length - 1);
+    const sample = input[idx] * (1 - frac) + input[nextIdx] * frac;
+    const s = Math.max(-1, Math.min(1, sample));
     pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
   }
 
@@ -202,7 +254,7 @@ export function streamStt(
     sample_rate: "16000",
   });
 
-  const ws = new WebSocket(`${backendWsUrl("/ws/sarvam")}?${params.toString()}`);
+  const ws = new WebSocket(`${getWsUrl("/ws/sarvam")}?${params.toString()}`);
   let resolved = false;
 
   const doCleanup = () => {
